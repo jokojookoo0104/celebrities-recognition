@@ -11,6 +11,7 @@ import numpy as np
 from monty.serialization import loadfn
 from monty.json import jsanitize
 import zipfile
+from os import listdir
 
 import logging
 import pickle
@@ -32,6 +33,7 @@ from src.thread_utils import *
 from src.config import *
 from src.model import VggFace
 from src.list_model import *
+from src.list_dataset import *
 
 from keras import backend as K 
 import tensorflow as tf
@@ -41,6 +43,7 @@ from src.face_detect import face_detect
 app = Flask(__name__)
 clf = None
 UPLOAD_FOLDER= './face_ss'
+DATABASE = './database'
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 ALLOWED_EXTENSIONS = set(['txt', 'gif', 'png', 'jpg', 'jpeg', 'bmp', 'rar', 'zip', '7zip', 'doc', 'docx'])
 def allowed_file(filename):
@@ -57,16 +60,17 @@ def test():
     return 'Kyanon Computer Vision'
 
 '''importdata'''  
-@app.route('/upload-data',methods=['POST'])
-def upload_data():
+@app.route('/import-data',methods=['POST'])
+def import_data():
     data = {'success':False}
     if request.method == 'POST':
-        if request.files['dataset']:
-            dataset = request.files['dataset']
-            filename = secure_filename(dataset.filename)
-            thread=Import_Data(filename,dataset)   
+        if request.files['datasetid']:
+            datasetid = request.files['datasetid']
+            filename = secure_filename(datasetid.filename)
+            thread=Import_Data(filename,datasetid)   
             thread.start()
             thread.join()
+            thread.setName(str(datasetid))
             return filename
     return jsonify(data)
 
@@ -117,7 +121,7 @@ def predict_image():
             else:
                 img_pad = img
             cv2.imwrite(os.path.join(app.config['UPLOAD_FOLDER'],f'{fn}_resize.png'), img_pad)
-            print('tao chua vao dc,dm no')
+            
             with graph.as_default():
                 img = Image.open(os.path.join(app.config['UPLOAD_FOLDER'], f'{fn}_resize.png' ))
                 bounding_boxes, landmarks = detect_faces(img) # detect bboxes and landmarks for all faces in the image
@@ -160,9 +164,9 @@ def predict_image():
 def update_data():
     data = {'success':False}
     if request.method == 'POST':
-        if request.form['datasetname']:
+        if request.form['datasetid']:
             try:
-                datasetid =  request.form.get('datasetname')
+                datasetid =  request.form.get('datasetid')
                 class_name = request.form['class_name']
                 file_name=[]
                 images = request.files.getlist('image')
@@ -171,7 +175,7 @@ def update_data():
                 thread.join()
                 
                 data['success']=True
-                data['dataset name'] = datasetid
+                data['dataset id'] = datasetid
                 data['status'] = 'QUEUED'
                                      
             except Exception as e:
@@ -188,7 +192,7 @@ def train_model():
     if request.method == 'POST':
         if request.form['datasetid']:
             dataset = request.form['datasetid']
-            modelname = request.form['modelname']
+            modelid = request.form['modelid']
             batch_size = request.form['batch_size']
             if batch_size is None or batch_size=='':
                 batch_size = 16
@@ -211,11 +215,12 @@ def train_model():
             class_name = request.form['class_name']
             if class_name is None or class_name =='':
                 class_name = 'none'
-            training_thread = TrainingThread(dataset,modelname,batch_size,epochs,lr,types,class_name)
+            training_thread = TrainingThread(dataset,modelid,batch_size,epochs,lr,types,class_name)
             training_thread.start()
+            training_thread.setName(str(modelid))
             
             data['dataset id'] = dataset
-            data['model name'] = modelname
+            data['model id'] = modelid
             data['batch size'] = batch_size
             data['epochs'] = epochs
             data['learning rate'] = lr
@@ -249,6 +254,46 @@ def check_evaluation_status():
         if request.form.get('evaluationid'):
             eval_id = request.form['evaluationid']
     return jsonify(data)
+
+'''list-dataset'''
+@app.route('/list-data',methods=['GET'])
+def list_dataset():
+    folders={'success': False}
+    if request.method == 'GET':
+        folders=os.listdir(os.path.join(DATABASE))
+    return jsonify(folders)
+
+'''train status'''
+@app.route('/train/status',methods=['POST'])
+def check_training_status():
+    res= {'status': False}
+    if request.method=='POST':
+        if request.form['modelid']:
+            modelid=request.form['modelid']
+            if os.path.exists('./trained-models/weights/'+ str(modelid)+'.h5'):
+                res['status']= True
+                return jsonify(res)
+            for thread in threading.enumerate():
+                if thread.getName() == modelid:
+                    res['status']= 'TRAINING'
+                    return jsonify(res)
+    return jsonify(res)
+
+'''import dataset status'''
+@app.route('/import-data/status',methods=['POST'])
+def check_import_data_status():
+    res= {'status': False}
+    if request.method=='POST':
+        if request.form['datasetid']:
+            datasetid=request.form['datasetid']
+            if os.path.exists('./database/'+ str(datasetid)):
+                res['status']= True
+                return jsonify(res)
+            for thread in threading.enumerate():
+                if thread.getName() == datasetid:
+                    res['status']= 'TRAINING'
+                    return jsonify(res)
+    return jsonify(res)
 
 if __name__ == 'main':
     print('Please wait until all models are loader')

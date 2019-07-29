@@ -25,15 +25,6 @@ from tensorflow import Graph, Session
 #IMG_FOLDER= './face_ss'
 global_lock = threading.Lock()
 model = face_detect()
-def create_thread(model):
-    thread_graph = Graph()
-    with thread_graph.as_default():
-        thread_session =  Session()
-        with thread_session.as_default():
-            embedding_model, triplet_model = GetModel(model)
-            graph = tf.get_default_graph()
-    return embedding_model,triplet_model, graph, thread_session
-
 #update class in dataset
 class UpdateData(threading.Thread):
     def __init__(self, datasetid,class_name, images):
@@ -43,27 +34,28 @@ class UpdateData(threading.Thread):
         self.images = images
         
     def run(self):
-        list_classes = os.listdir(os.path.join(self.datasetid))
+        PATH = UPLOAD_FOLDER +'/'+ self.datasetid
+        list_classes = os.listdir(os.path.join(PATH))
         if self.class_name in list_classes:
             for i in range(len(self.images)):
-                img_name = os.path.join(self.datasetid,self.class_name,self.images[i].filename)
+                img_name = os.path.join(PATH,self.class_name,self.images[i].filename)
                 self.images[i].save(img_name)
             return
         else:
-            path= os.path.join(self.datasetid,self.class_name)
+            path= os.path.join(PATH,self.class_name)
             os.mkdir(path)
             for i in range(len(self.images)):
-                img_name = os.path.join(self.datasetid,self.class_name,self.images[i].filename)
+                img_name = os.path.join(PATH,self.class_name,self.images[i].filename)
                 self.images[i].save(img_name)
             return
 
 
 #import data set         
 class Import_Data (threading.Thread):
-    def __init__(self,filename,dataset):
+    def __init__(self,filename,datasetid):
         threading.Thread.__init__(self)
         self.filename = filename
-        self.dataset = dataset
+        self.dataset = datasetid
     
     def run(self):
         self.savedata(self.filename,self.dataset)
@@ -79,14 +71,15 @@ class Import_Data (threading.Thread):
         #extract file zip
         zip_ref.extractall(UPLOAD_FOLDER)
         zip_ref.close()
+        os.system('rm -rf '+UPLOAD_FOLDER+'/'+filename)
         global_lock.release()
         
 class TrainingThread(threading.Thread):
-    def __init__(self,dataset,modelname,batch_size, epochs,lr,types,class_name):
+    def __init__(self,dataset,modelid,batch_size, epochs,lr,types,class_name):
         #threading.Thread.__init__(self)
         super(TrainingThread,self).__init__()
-        self.modelname = modelname
-        self.dataset = dataset
+        self.modelname = modelid
+        self.dataset = UPLOAD_FOLDER+'/'+dataset
         self.batch_size = batch_size
         self.epochs = epochs
         self.lr=lr
@@ -131,29 +124,32 @@ class TrainingThread(threading.Thread):
         
     def pretrainSingleClass(self,modelname,dataset,class_name,batch_size,epochs,lr):
         #K.clear_session()
+        graph2 = Graph()
+        with graph2.as_default():
+            session2 = Session()
+            with session2.as_default():
         
-        with tf.Session(graph=tf.Graph()) as sess:
-            K.set_session(sess)
-            reader = LFWReader(dir_images=dataset,class_name=class_name)
-            gen_train = TripletGeneratorSingleID(reader)
-            gen_test = TripletGeneratorSingleID(reader)
-            embedding_model, triplet_model = GetModel()
-            for layer in embedding_model.layers[-3:]:
-                layer.trainable = True
-                
-            for layer in embedding_model.layers[: -3]:
-                layer.trainable = False
-            triplet_model.compile(loss=None, optimizer=Adam(lr))
-            
-            history = triplet_model.fit_generator(gen_train, 
-                                      validation_data=gen_test,  
-                                      epochs=epochs, 
-                                      verbose=1, 
-                                        steps_per_epoch=50,
-                                      validation_steps=5)
-            
-            embedding_model.save_weights('./trained-models/weights/'+modelname+'.h5')
-            self.embeddingmodel(modelname,dataset)
+                reader = LFWReader(dir_images=dataset,class_name=class_name)
+                gen_train = TripletGeneratorSingleID(reader)
+                gen_test = TripletGeneratorSingleID(reader)
+                embedding_model, triplet_model = GetModel()
+                for layer in embedding_model.layers[-3:]:
+                    layer.trainable = True
+
+                for layer in embedding_model.layers[: -3]:
+                    layer.trainable = False
+                triplet_model.compile(loss=None, optimizer=Adam(lr))
+
+                history = triplet_model.fit_generator(gen_train, 
+                                          validation_data=gen_test,  
+                                          epochs=epochs, 
+                                          verbose=1, 
+                                            steps_per_epoch=50,
+                                          validation_steps=5)
+
+                embedding_model.save_weights('./trained-models/weights/'+modelname+'.h5')
+                self.embeddingmodel(modelname,dataset)
+                K.get_session()
 
         
       
